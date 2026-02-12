@@ -1,5 +1,5 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { stepCountIs, ToolLoopAgent } from "ai";
+import { generateText, type LanguageModelUsage, type ModelMessage } from "ai";
 import { createBashTool } from "bash-tool";
 import { Bash } from "just-bash";
 
@@ -11,25 +11,38 @@ async function main() {
     apiKey: OPENROUTER_API_KEY
   });
 
-  const sandbox = new Bash({cwd: process.cwd()});
+  const sandbox = new Bash({ cwd: process.cwd() });
   const { tools } = await createBashTool({
     sandbox,
-    uploadDirectory: {source: process.cwd(), include: "**/*.{ts,json}"},
+    uploadDirectory: { source: process.cwd(), include: "**/*.{ts,json}" },
     destination: process.cwd()
   });
 
   const model = openrouter.chat('google/gemini-3-flash-preview');
-  const agent = new ToolLoopAgent({
-    model,
-    tools,
-    stopWhen: stepCountIs(10)
-  });
-  const result = await agent.generate({
-    prompt: "当前目录是什么，里面有哪些文件？"
-  });
-  console.log('usage: ', result.usage);
-  console.log('toolCalls: ', result.toolCalls,);
-  console.log(result.text);
+  const messages: ModelMessage[] = [{
+    role: 'user',
+    content: '当前目录是什么，里面有哪些文件？'
+  }]
+  let step = 0;
+  const maxSteps = 10;
+  const usages: LanguageModelUsage[] = [];
+  while (step < maxSteps) {
+    const res = await generateText({
+      model,
+      tools,
+      messages
+    });
+    messages.push(...res.response.messages);
+    console.log(messages);
+    usages.push(res.usage);
+    console.log('finishReason: ', res.finishReason);
+    if (res.text) {
+      console.log(res.text);
+      break;
+    }
+    step++
+  }
+  console.log(usages);
 }
 
 main();
