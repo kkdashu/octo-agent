@@ -1,4 +1,3 @@
-import type { ImagePart } from "ai";
 import { loadPhoton } from "./photo.js";
 
 export interface ImageResizeOptions {
@@ -36,6 +35,12 @@ function pickSmaller(
 	return a.buffer.length <= b.buffer.length ? a : b;
 }
 
+export type ImagePart = {
+  type: string,
+  image: string,
+  mimeType: string
+}
+
 /**
  * Resize an image to fit within the specified max dimensions and file size.
  * Returns the original image if it already fits within the limits.
@@ -51,7 +56,7 @@ function pickSmaller(
  */
 export async function resizeImage(img: ImagePart, options?: ImageResizeOptions): Promise<ResizedImage> {
 	const opts = { ...DEFAULT_OPTIONS, ...options };
-  const imageData = img.image as any;
+  const imageData = img.image;
 	const inputBuffer = Buffer.from(imageData, "base64");
 
 	const photon = await loadPhoton();
@@ -59,7 +64,7 @@ export async function resizeImage(img: ImagePart, options?: ImageResizeOptions):
 		// Photon not available, return original image
 		return {
 			data: imageData,
-			mimeType: img.mediaType || '',
+			mimeType: img.mimeType || '',
 			originalWidth: 0,
 			originalHeight: 0,
 			width: 0,
@@ -74,14 +79,14 @@ export async function resizeImage(img: ImagePart, options?: ImageResizeOptions):
 
 		const originalWidth = image.get_width();
 		const originalHeight = image.get_height();
-		const format = img.mediaType?.split("/")[1] ?? "png";
+		const format = img.mimeType?.split("/")[1] ?? "png";
 
 		// Check if already within all limits (dimensions AND size)
 		const originalSize = inputBuffer.length;
 		if (originalWidth <= opts.maxWidth && originalHeight <= opts.maxHeight && originalSize <= opts.maxBytes) {
 			return {
 				data: imageData,
-				mimeType: img.mediaType ?? `image/${format}`,
+				mimeType: img.mimeType ?? `image/${format}`,
 				originalWidth,
 				originalHeight,
 				width: originalWidth,
@@ -204,7 +209,7 @@ export async function resizeImage(img: ImagePart, options?: ImageResizeOptions):
 		// Failed to load image
 		return {
 			data: imageData,
-			mimeType: img.mediaType || '',
+			mimeType: img.mimeType || '',
 			originalWidth: 0,
 			originalHeight: 0,
 			width: 0,

@@ -1,10 +1,12 @@
-import { tool, type ImagePart, type ModelMessage, type TextPart } from "ai";
+import { tool, type TextPart } from "ai";
 import { z } from "zod"
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, mkdir as fsMkdir } from "fs/promises";
 import { constants } from "fs";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "./utils/truncate";
+import * as pathMod from "path";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead, type TruncationResult } from "./utils/truncate";
 import { resolveReadPath } from "./utils/path-utils";
 import { detectSupportedImageMimeTypeFromFile } from "./utils/mime";
+import { formatDimensionNote, resizeImage, type ImagePart } from "./utils/resize-image";
 
 
 /**
@@ -31,28 +33,30 @@ export interface ReadToolDetails {
 }
 
 export function createReadTool(cwd: string) {
-  return tool({
-    description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
-    inputSchema: z.object({
-      path: z.string().describe('Path to the file to read (relative or absolute)'),
-      offset: z.number().optional().describe('Line number to start reading from (1-indexed)'),
-      limit: z.number().optional().describe('Maximum number of lines to read')
-    }),
-    execute: async({path, offset, limit}) => {
+	return tool({
+		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		inputSchema: z.object({
+			path: z.string().describe('Path to the file to read (relative or absolute)'),
+			offset: z.number().optional().describe('Line number to start reading from (1-indexed)'),
+			limit: z.number().optional().describe('Maximum number of lines to read')
+		}),
+		execute: async ({ path, offset, limit }) => {
 			const absolutePath = resolveReadPath(path, cwd);
-      const ops = defaultReadOperations;
-      const autoResizeImages = true;
+			const ops = defaultReadOperations;
+			const autoResizeImages = true;
 
-			return new Promise<{ content: (TextPart | ImagePart)[]; details: ReadToolDetails | undefined }>(
+			return new Promise<(TextPart | ImagePart)[]>(
 				(resolve, reject) => {
+
+					console.log('absolutePath: ', absolutePath);
 
 					let aborted = false;
 
 					// Set up abort handler
-					const onAbort = () => {
-						aborted = true;
-						reject(new Error("Operation aborted"));
-					};
+					// const onAbort = () => {
+					// 	aborted = true;
+					// 	reject(new Error("Operation aborted"));
+					// };
 
 					// Perform the read operation
 					(async () => {
@@ -66,19 +70,33 @@ export function createReadTool(cwd: string) {
 							}
 
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
+							console.log('mimeType: ', mimeType);
 
 							// Read the file based on type
 							let content: (TextPart | ImagePart)[];
-							let details: ReadToolDetails | undefined;
 
 							if (mimeType) {
 								// Read as image (binary)
 								const buffer = await ops.readFile(absolutePath);
+								console.log('buffer: ', buffer);
 								const base64 = buffer.toString("base64");
 
 								if (autoResizeImages) {
 									// Resize image if needed
-									const resized = await resizeImage({ type: "image", data: base64, mimeType });
+									const resized = await resizeImage({type: 'image', image: base64, mimeType });
+
+									// Debug: Save resized image to .octo-run/assets/
+									try {
+										const assetsDir = pathMod.join(cwd, '.octo-run', 'assets');
+										await fsMkdir(assetsDir, { recursive: true });
+										const filename = pathMod.basename(absolutePath);
+										const debugPath = pathMod.join(assetsDir, `debug_${filename}`);
+										await fsWriteFile(debugPath, Buffer.from(resized.data, 'base64'));
+										console.log(`[ReadTool] Saved debug image to ${debugPath}`);
+									} catch (error) {
+										console.error('[ReadTool] Failed to save debug image:', error);
+									}
+
 									const dimensionNote = formatDimensionNote(resized);
 
 									let textNote = `Read image file [${resized.mimeType}]`;
@@ -88,13 +106,13 @@ export function createReadTool(cwd: string) {
 
 									content = [
 										{ type: "text", text: textNote },
-										{ type: "image", data: resized.data, mimeType: resized.mimeType },
+										{ type: "image", image: resized.data, mimeType: resized.mimeType },
 									];
 								} else {
 									const textNote = `Read image file [${mimeType}]`;
 									content = [
 										{ type: "text", text: textNote },
-										{ type: "image", data: base64, mimeType },
+										{ type: "image", image: base64, mimeType: mimeType },
 									];
 								}
 							} else {
@@ -131,9 +149,8 @@ export function createReadTool(cwd: string) {
 
 								if (truncation.firstLineExceedsLimit) {
 									// First line at offset exceeds 30KB - tell model to use bash
-									const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine], "utf-8"));
+									const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine]!, "utf-8"));
 									outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
-									details = { truncation };
 								} else if (truncation.truncated) {
 									// Truncation occurred - build actionable notice
 									const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
@@ -146,7 +163,6 @@ export function createReadTool(cwd: string) {
 									} else {
 										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
 									}
-									details = { truncation };
 								} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
 									// User specified limit, there's more content, but no truncation
 									const remaining = allLines.length - (startLine + userLimitedLines);
@@ -168,16 +184,16 @@ export function createReadTool(cwd: string) {
 							}
 
 							// Clean up abort handler
-							if (signal) {
-								signal.removeEventListener("abort", onAbort);
-							}
+							// if (signal) {
+							// 	signal.removeEventListener("abort", onAbort);
+							// }
 
-							resolve({ content, details });
+							resolve(content);
 						} catch (error: any) {
 							// Clean up abort handler
-							if (signal) {
-								signal.removeEventListener("abort", onAbort);
-							}
+							// if (signal) {
+							// 	signal.removeEventListener("abort", onAbort);
+							// }
 
 							if (!aborted) {
 								reject(error);
@@ -186,6 +202,6 @@ export function createReadTool(cwd: string) {
 					})();
 				},
 			);
-    }
-  });
+		}
+	});
 }
