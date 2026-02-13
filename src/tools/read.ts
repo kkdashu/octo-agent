@@ -1,4 +1,4 @@
-import { tool, type TextPart } from "ai";
+import { tool } from "ai";
 import { z } from "zod"
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, mkdir as fsMkdir } from "fs/promises";
 import { constants } from "fs";
@@ -32,20 +32,31 @@ export interface ReadToolDetails {
 	truncation?: TruncationResult;
 }
 
+export type ReadToolOutput =Array<{
+  type: 'text',
+  text: string
+} | {
+  type: 'image-data',
+  data: string,
+  mediaType: string
+}>
+
 export function createReadTool(cwd: string) {
 	return tool({
 		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+    //@ts-ignore
 		inputSchema: z.object({
 			path: z.string().describe('Path to the file to read (relative or absolute)'),
 			offset: z.number().optional().describe('Line number to start reading from (1-indexed)'),
 			limit: z.number().optional().describe('Maximum number of lines to read')
 		}),
+    //@ts-ignore
 		execute: async ({ path, offset, limit }) => {
 			const absolutePath = resolveReadPath(path, cwd);
 			const ops = defaultReadOperations;
 			const autoResizeImages = true;
 
-			return new Promise<(TextPart | ImagePart)[]>(
+			return new Promise<ReadToolOutput>(
 				(resolve, reject) => {
 
 					console.log('absolutePath: ', absolutePath);
@@ -73,7 +84,7 @@ export function createReadTool(cwd: string) {
 							console.log('mimeType: ', mimeType);
 
 							// Read the file based on type
-							let content: (TextPart | ImagePart)[];
+							let content: ReadToolOutput;
 
 							if (mimeType) {
 								// Read as image (binary)
@@ -106,13 +117,13 @@ export function createReadTool(cwd: string) {
 
 									content = [
 										{ type: "text", text: textNote },
-										{ type: "image", image: resized.data, mimeType: resized.mimeType },
+										{ type: "image-data", data: resized.data, mediaType: resized.mimeType },
 									];
 								} else {
 									const textNote = `Read image file [${mimeType}]`;
 									content = [
 										{ type: "text", text: textNote },
-										{ type: "image", image: base64, mimeType: mimeType },
+										{ type: "image-data", data: base64, mediaType: mimeType },
 									];
 								}
 							} else {
@@ -202,6 +213,23 @@ export function createReadTool(cwd: string) {
 					})();
 				},
 			);
-		}
+		},
+    //@ts-ignore
+    toModelOutput: (opts) => {
+      const output = opts.output as ReadToolOutput;
+      return {
+        type: 'content',
+        value: output.map(o => {
+          if (o.type == 'image-data') {
+            return {
+              ...o,
+              type: 'media',
+            }
+          } else {
+            return o;
+          }
+        })
+      }
+    },
 	});
 }

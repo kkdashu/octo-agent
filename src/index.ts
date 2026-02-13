@@ -1,9 +1,10 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { streamText, type LanguageModelUsage, type ModelMessage } from "ai";
+import { streamText, type ModelMessage } from "ai";
 import { createBashTool } from "./tools/bash.js";
 import * as readline from 'node:readline/promises';
 import { createReadTool } from "./tools/read.js";
 import util from 'util';
+import { splitMultipartToolResults } from "./utils/split-multipart-tool-results.js";
 
 const terminal = readline.createInterface({
   input: process.stdin,
@@ -50,8 +51,12 @@ async function main() {
       const text = await res.text
       process.stdout.write('\n\n');
       const response = await res.response;
-      console.log('response: ', util.inspect(response, {showHidden: false, depth: null, colors: true}));
-      messages.push(...response.messages);
+      // ai-sdk 的 openrouter provider 有bug，不能识别工具返回的图片
+      // 先hack一下，把工具返回的图片转成用户消息
+      // https://github.com/OpenRouterTeam/ai-sdk-provider/issues/181
+      const newMessages = splitMultipartToolResults({messages: response.messages});
+      console.log('response: ', util.inspect(newMessages, {showHidden: false, depth: null, colors: true}));
+      messages.push(...newMessages);
       if (text) {
         break;
       }
