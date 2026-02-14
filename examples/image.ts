@@ -1,16 +1,12 @@
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { streamText } from "ai";
 import * as path from "path";
 import * as fs from 'fs/promises';
+import { createModel } from "../src/provider/nim";
 
-const OPENROUTER_API_KEY = process.env.AI_API_KEY;
-const openrouter = createOpenRouter({
-  apiKey: OPENROUTER_API_KEY
-});
-const model = openrouter.chat('google/gemini-3-flash-preview');
+const model = createModel('z-ai/glm4.7');
 
 async function main() {
-  const imagePath = path.join(process.cwd(), '.octo-run', 'assets', 'debug_screenshot.png');
+  const imagePath = path.join(process.cwd(), '.octo-run', 'assets', 'debug_calendar_view.png');
   console.log(imagePath);
   const buffer = await fs.readFile(imagePath);
   const base64 = buffer.toString("base64");

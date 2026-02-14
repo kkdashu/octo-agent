@@ -5,6 +5,8 @@ import { createReadTool } from "./tools/read.js";
 import util from 'util';
 import { splitMultipartToolResults } from "./utils/split-multipart-tool-results.js";
 import { createModel } from "./provider/nim.js";
+import { formatSkillsForPrompt, loadSkillsFromDir } from "./skills.js";
+import { join } from "node:path";
 // import { createModel } from "./provider/openrouter.js";
 
 const terminal = readline.createInterface({
@@ -21,11 +23,37 @@ async function main() {
   const read = createReadTool(workdir);
 
   // const model = createModel('google/gemini-3-flash-preview');
-  const model = createModel('z-ai/glm4.7');
+  // const model = createModel('z-ai/glm4.7');
+  const model = createModel('moonshotai/kimi-k2.5');
 
-  const messages: ModelMessage[] = [];
+
+  const {skills} = loadSkillsFromDir({dir: join(workdir, 'skills'), source: 'project'});
+  console.log(skills);
+  const skillPrompts = formatSkillsForPrompt(skills);
+	const now = new Date();
+	const dateTime = now.toLocaleString("en-US", {
+		weekday: "long",
+		year: "numeric",
+		month: "long",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		timeZoneName: "short",
+	});
+  let systemPrompt = `
+  你是Octo, 一个运行在MacOS系统内的Agent
+  `;
+  systemPrompt += skillPrompts;
+  systemPrompt += `
+  当前日期和时间: ${dateTime}
+  `
   // const usages: LanguageModelUsage[] = [];
 
+  const messages: ModelMessage[] = [{
+    role: 'system',
+    content: systemPrompt
+  }];
   const runTurns = async () => {
     let step = 0;
     const maxStep = 10;
