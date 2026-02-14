@@ -1,10 +1,11 @@
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { streamText, type ModelMessage } from "ai";
 import { createBashTool } from "./tools/bash.js";
 import * as readline from 'node:readline/promises';
 import { createReadTool } from "./tools/read.js";
 import util from 'util';
 import { splitMultipartToolResults } from "./utils/split-multipart-tool-results.js";
+import { createModel } from "./provider/nim.js";
+// import { createModel } from "./provider/openrouter.js";
 
 const terminal = readline.createInterface({
   input: process.stdin,
@@ -12,19 +13,16 @@ const terminal = readline.createInterface({
 });
 
 
-const OPENROUTER_API_KEY = process.env.AI_API_KEY;
-
 async function main() {
-  const openrouter = createOpenRouter({
-    apiKey: OPENROUTER_API_KEY
-  });
 
   const workdir = process.cwd();
   console.log(workdir);
   const bash = createBashTool(workdir);
   const read = createReadTool(workdir);
 
-  const model = openrouter.chat('google/gemini-3-flash-preview');
+  // const model = createModel('google/gemini-3-flash-preview');
+  const model = createModel('z-ai/glm4.7');
+
   const messages: ModelMessage[] = [];
   // const usages: LanguageModelUsage[] = [];
 
@@ -42,7 +40,10 @@ async function main() {
           console.log('toolResults: ', util.inspect(opts.toolResults, {showHidden: false, depth: null, colors: true}));
           console.log('finishReason: ', opts.finishReason);
         },
-        messages
+        messages,
+        onError: (err) => {
+          console.error(err);
+        }
       });
       process.stdout.write('\nAssistant: ');
       for await (const chunk of res.textStream) {
@@ -57,7 +58,9 @@ async function main() {
       const newMessages = splitMultipartToolResults({messages: response.messages});
       console.log('response: ', util.inspect(newMessages, {showHidden: false, depth: null, colors: true}));
       messages.push(...newMessages);
-      if (text) {
+      console.log('text', text);
+      const finishReason = await res.finishReason;
+      if (finishReason == 'stop' || finishReason == 'error') {
         break;
       }
       step++;
